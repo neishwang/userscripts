@@ -1,7 +1,7 @@
-# Dépendances
+# Dependencies
 node_modules/
 
-# Build
+# Build output
 dist/
 build/
 
@@ -9,13 +9,13 @@ build/
 *.log
 npm-debug.log*
 
-# Éditeurs / OS
+# Editors / OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Environnement
+# Environment
 .env
 .env.local
