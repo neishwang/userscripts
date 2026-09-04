@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch — Card options button everywhere
 // @namespace    https://github.com/neishwang/userscripts
-// @version      1.0.0
+// @version      2.0.0
 // @description  Adds the "more options for this channel" button to every stream card, including directory pages where Twitch omits it.
 // @author       neishwang
 // @match        https://www.twitch.tv/*
@@ -13,8 +13,8 @@
     'use strict';
 
     // ---- Settings -----------------------------------------------------------
-    // Operation names we try to learn from Twitch's own GraphQL traffic.
-    const LEARNABLE_OPS = /recommendationfeedback|notinterested|shelffeedback|feedback/i;
+    // The single operation behind every item of the native feedback menu.
+    const FEEDBACK_OP = 'AddRecommendationFeedback';
     // Hide the card locally once an action succeeds, for immediate feedback.
     const HIDE_ON_SUCCESS = true;
     // -------------------------------------------------------------------------
@@ -22,6 +22,38 @@
     const MARK = 'data-tco-injected';
     const GQL_URL = 'https://gql.twitch.tv/gql';
     const STORE_KEY = 'tco-learned-operations';
+
+    /**
+     * Known-good request, captured from the native menu on the home page.
+     *
+     * The sha256 hash is what makes this brittle: Twitch rotates persisted
+     * query hashes on deploy. When that happens this default stops working,
+     * and the recorder below silently replaces it the next time the user hits
+     * the native menu — so the script repairs itself rather than staying dead.
+     *
+     * Note that "not interested in a channel" and "hide this game" are the same
+     * operation, told apart only by input.itemType. Templates are therefore
+     * keyed by operation *and* item type, or one would overwrite the other.
+     */
+    const DEFAULT_TEMPLATES = {
+        [`${FEEDBACK_OP}::CHANNEL`]: {
+            operationName: FEEDBACK_OP,
+            hash: '8aae43e5b7fe68adc70608e35a4c9ec859d2cfde8962347487114703845d7887',
+            query: null,
+            variables: {
+                input: {
+                    category: 'NOT_INTERESTED',
+                    itemID: '',
+                    itemType: 'CHANNEL',
+                    sourceItemPage: 'twitch_home',
+                    sourceItemRequestID: '',
+                    sourceItemTrackingID: '',
+                },
+            },
+        },
+    };
+
+    const templateKey = (op, itemType) => `${op}::${itemType || 'UNKNOWN'}`;
 
     // Kept in memory only, never persisted: this holds the user's session token,
     // captured from Twitch's own requests so we can replay against the same
@@ -37,11 +69,8 @@
     // =========================================================================
 
     /**
-     * Twitch drives the native menu through persisted GraphQL queries, whose
-     * sha256 hashes rotate on every deploy. Rather than hardcoding them, we
-     * observe the real request the native button makes and store its shape.
-     * The user only has to use the native menu once, on a page that still has
-     * it (the logged-in home page), to unlock the action everywhere else.
+     * Anything we observe Twitch send takes precedence over the bundled
+     * default, so a rotated hash heals itself without a script update.
      */
     function loadLearned() {
         try {
@@ -92,12 +121,12 @@
         }
         for (const op of (Array.isArray(parsed) ? parsed : [parsed])) {
             if (!op || typeof op !== 'object') continue;
-            const name = op.operationName;
-            if (!name || !LEARNABLE_OPS.test(name)) continue;
+            if (op.operationName !== FEEDBACK_OP) continue;
 
             const persisted = op.extensions && op.extensions.persistedQuery;
-            saveLearned(name, {
-                operationName: name,
+            const itemType = op.variables && op.variables.input && op.variables.input.itemType;
+            saveLearned(templateKey(op.operationName, itemType), {
+                operationName: op.operationName,
                 hash: (persisted && persisted.sha256Hash) || null,
                 query: op.query || null,
                 variables: op.variables || {},
@@ -222,9 +251,9 @@
     const ID_KEY = /(^id$|itemid|channelid|targetid|userid|broadcasterid)/i;
 
     /**
-     * Swap the channel identifier in a recorded variables payload. We match on
-     * key name rather than on the recorded value, since we never know which
-     * channel the user originally acted on.
+     * Swap the channel identifier in a variables payload. Today that is
+     * input.itemID, but we match on key name rather than on a fixed path so a
+     * learned template with a reshuffled input still retargets correctly.
      */
     function retarget(variables, channelId) {
         if (Array.isArray(variables)) return variables.map(v => retarget(v, channelId));
@@ -238,17 +267,22 @@
         return out;
     }
 
-    async function replay(operationName, channelId) {
-        const learned = loadLearned()[operationName];
-        if (!learned) throw new Error('nothing learned yet');
+    function templateFor(itemType) {
+        const key = templateKey(FEEDBACK_OP, itemType);
+        return loadLearned()[key] || DEFAULT_TEMPLATES[key] || null;
+    }
+
+    async function replay(itemType, channelId) {
+        const template = templateFor(itemType);
+        if (!template) throw new Error('no request template');
         if (!hasCredentials()) throw new Error('no credentials captured');
 
         const payload = {
-            operationName: learned.operationName,
-            variables: retarget(learned.variables, channelId),
+            operationName: template.operationName,
+            variables: retarget(template.variables, channelId),
         };
-        if (learned.hash) payload.extensions = { persistedQuery: { version: 1, sha256Hash: learned.hash } };
-        else if (learned.query) payload.query = learned.query;
+        if (template.hash) payload.extensions = { persistedQuery: { version: 1, sha256Hash: template.hash } };
+        else if (template.query) payload.query = template.query;
 
         const res = await nativeFetch(GQL_URL, {
             method: 'POST',
@@ -323,9 +357,7 @@
         menu.className = 'tco-menu';
         menu.setAttribute('role', 'menu');
 
-        const learnedNames = Object.keys(loadLearned());
-        const opName = learnedNames[0] || null;
-        const ready = Boolean(opName && card.id && hasCredentials());
+        const ready = Boolean(templateFor('CHANNEL') && card.id && hasCredentials());
 
         const addItem = (label, onClick, enabled) => {
             const item = document.createElement('button');
@@ -343,7 +375,7 @@
             notInterested.disabled = true;
             notInterested.textContent = 'Sending…';
             try {
-                await replay(opName, card.id);
+                await replay('CHANNEL', card.id);
                 if (HIDE_ON_SUCCESS) {
                     // Remove the outermost wrapper so the grid does not keep a gap.
                     const wrapper = article.closest('[data-target], .shelf-card__impression-wrapper') || article;
@@ -369,11 +401,11 @@
         if (!ready) {
             const note = document.createElement('div');
             note.className = 'tco-note';
-            note.textContent = !opName
-                ? 'Use the native "…" menu once on the home page to teach this script the request.'
-                : !card.id
-                    ? 'Could not read this channel ID from the page.'
-                    : 'No Twitch credentials captured yet — reload the page.';
+            note.textContent = !card.id
+                ? 'Could not read this channel ID from the page.'
+                : !hasCredentials()
+                    ? 'Waiting for Twitch credentials — they are captured from the page\'s own requests.'
+                    : 'No request template available.';
             menu.appendChild(note);
         }
 
