@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch — Card options button everywhere
 // @namespace    https://github.com/neishwang/userscripts
-// @version      3.0.0
+// @version      3.1.0
 // @description  Adds the "more options for this channel" button to every stream card, including directory pages where Twitch omits it.
 // @author       neishwang
 // @match        https://www.twitch.tv/*
@@ -80,6 +80,24 @@
 
     const MENU_SKIN_KEY = 'tco-native-menu-markup';
     const MENU_STYLE_KEY = 'tco-native-menu-styles';
+    const REPORT_TARGET = '[data-a-target="report-button-report-button"]';
+
+    /**
+     * Tell the card feedback menu apart from every other Twitch dropdown.
+     *
+     * All of them — the profile menu included — mount into the same ReactModal
+     * portal and use the same drop-down item markup, so "a dialog holding menu
+     * items" matches far too much: opening the profile menu was enough to
+     * overwrite the stored skin, after which our button reopened that menu.
+     *
+     * The report item is the reliable marker, and requiring a second item on
+     * top of it excludes the report-only menu that VOD cards carry.
+     */
+    function looksLikeFeedbackMenu(root) {
+        const buttons = [...root.querySelectorAll('button')];
+        return buttons.some(b => b.matches(REPORT_TARGET)) &&
+            buttons.some(b => !b.matches(REPORT_TARGET));
+    }
 
     /**
      * Styled-components injects its rules at runtime, only for components the
@@ -140,12 +158,33 @@
     // Captured from an open native menu; same rotation caveat as DEFAULT_SKIN.
     const DEFAULT_MENU_SKIN = "<div class=\"Layout-sc-1xcs6mc-0 egfniL\" style=\"width: 20rem;\"><div class=\"Layout-sc-1xcs6mc-0 dQMmwU\"><div class=\"Layout-sc-1xcs6mc-0 KTokO\"><div class=\"Layout-sc-1xcs6mc-0 eDiLRr\"><button class=\"ScInteractableBase-sc-ofisyf-0 ScInteractableDefault-sc-ofisyf-1 cQzzvm iTnOTE tw-interactable\"><div class=\"Layout-sc-1xcs6mc-0 dmmLGq\"><div class=\"Layout-sc-1xcs6mc-0 drAA-dO\"><div class=\"Layout-sc-1xcs6mc-0 bPLZqY InjectLayout-sc-1i43xsx-0 tw-drop-down-menu-item-figure\"><div class=\"ScSvgWrapper-sc-wkgzod-0 cwspUC tw-svg\"><svg height=\"24\" viewbox=\"0 0 24 24\" width=\"24\"><path clip-rule=\"evenodd\" d=\"m2.293 3.707 18 18 1.414-1.414-3.683-3.683a7.98 7.98 0 0 0 .37-.404L22 12l-3.605-4.206A8 8 0 0 0 12.32 5h-.64a8 8 0 0 0-4.122 1.144l-3.85-3.851-1.415 1.414Zm6.738 3.91 2.45 2.45a2.003 2.003 0 0 1 2.451 2.451l2.678 2.678c.091-.094.18-.191.266-.291L19.366 12l-2.49-2.905A6 6 0 0 0 12.32 7h-.64a6 6 0 0 0-2.65.616Z\" fill-rule=\"evenodd\"></path><path d=\"M12.32 19c.74 0 1.469-.102 2.167-.299l-1.718-1.718a5.967 5.967 0 0 1-.449.017h-.64a6 6 0 0 1-4.556-2.095L4.634 12l1.455-1.697L4.67 8.885 2 12l3.605 4.206A8 8 0 0 0 11.68 19h.64Z\"></path></svg></div></div></div><div class=\"Layout-sc-1xcs6mc-0 dmulkQ\">Pas intéressé</div></div></button></div><div class=\"Layout-sc-1xcs6mc-0 ScDropDownMenuSeparator-sc-sll02v-0 UOirU giVkI\" role=\"separator\"></div><div class=\"Layout-sc-1xcs6mc-0 eDiLRr\"><button aria-label=\"Signaler la chaîne\" class=\"ScInteractableBase-sc-ofisyf-0 ScInteractableDefault-sc-ofisyf-1 cQzzvm iTnOTE tw-interactable\" data-a-target=\"report-button-report-button\"><div class=\"Layout-sc-1xcs6mc-0 dmmLGq\"><div class=\"Layout-sc-1xcs6mc-0 drAA-dO\"><div class=\"Layout-sc-1xcs6mc-0 bPLZqY InjectLayout-sc-1i43xsx-0 tw-drop-down-menu-item-figure\"><div class=\"ScSvgWrapper-sc-wkgzod-0 cwspUC tw-svg\"><svg height=\"24\" viewbox=\"0 0 24 24\" width=\"24\"><path d=\"M11 14a1 1 0 1 1 2 0 1 1 0 0 1-2 0Zm2-7h-2v4h2V7Z\"></path><path clip-rule=\"evenodd\" d=\"m12 22-3-3H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4l-3 3Zm-2.172-5L12 19.172 14.172 17H19V5H5v12h4.828Z\" fill-rule=\"evenodd\"></path></svg></div></div></div><div class=\"Layout-sc-1xcs6mc-0 dmulkQ\">Signaler la chaîne</div></div></button></div></div></div></div>";
 
+    /**
+     * Validate on the way out as well as on the way in: a skin captured before
+     * this check existed can already be the wrong menu sitting in storage, and
+     * only discarding it here repairs that without the user clearing anything
+     * by hand. The style snapshot goes with it, being indexed against markup
+     * we are about to stop using.
+     */
     function loadMenuSkin() {
+        let stored = null;
         try {
-            return localStorage.getItem(MENU_SKIN_KEY) || DEFAULT_MENU_SKIN;
+            stored = localStorage.getItem(MENU_SKIN_KEY);
         } catch {
             return DEFAULT_MENU_SKIN;
         }
+        if (!stored) return DEFAULT_MENU_SKIN;
+
+        const probe = document.createElement('div');
+        probe.innerHTML = stored;
+        if (probe.firstElementChild && looksLikeFeedbackMenu(probe)) return stored;
+
+        try {
+            localStorage.removeItem(MENU_SKIN_KEY);
+            localStorage.removeItem(MENU_STYLE_KEY);
+        } catch {
+            // Nothing to do; the default is returned either way.
+        }
+        return DEFAULT_MENU_SKIN;
     }
 
     /**
@@ -158,9 +197,11 @@
         if (!dialog) return;
 
         const panel = dialog.closest('[role="dialog"]');
+        if (!panel || !looksLikeFeedbackMenu(panel)) return;
+
         // The panel sits under Popper's positioned wrapper; skip both layers so
         // we store only the menu itself and position it ourselves.
-        const inner = panel && panel.querySelector('[style*="width"]');
+        const inner = panel.querySelector('[style*="width"]');
         if (!inner) return;
 
         try {
@@ -627,7 +668,6 @@
     addEventListener('scroll', () => { if (openMenu) closeMenu(); }, true);
     addEventListener('resize', () => { if (openMenu) closeMenu(); });
 
-    const REPORT_TARGET = '[data-a-target="report-button-report-button"]';
     const UNDO_TARGET = '[data-a-target="hidden-content-notice-undo"]';
 
     /**
