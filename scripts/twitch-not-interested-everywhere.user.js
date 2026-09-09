@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Twitch — Card options button everywhere
+// @name         Twitch — Not Interested everywhere
 // @namespace    https://github.com/neishwang/userscripts
-// @version      3.2.0
-// @description  Adds the "more options for this channel" button to every stream card, including directory pages where Twitch omits it. Companion scripts can add their own menu items.
+// @version      4.0.0
+// @description  Puts the "not interested" action on every stream card, including the directory pages where Twitch omits the menu entirely. Rebuilds the native menu, sends the real feedback, and shows Twitch's removal notice with a working undo. Companion scripts can add their own items.
 // @author       neishwang
 // @match        https://www.twitch.tv/*
 // @run-at       document-start
@@ -22,7 +22,7 @@
     // -------------------------------------------------------------------------
 
     const GQL_URL = 'https://gql.twitch.tv/gql';
-    const STORE_KEY = 'tco-learned-operations';
+    const STORE_KEY = 'nie-learned-operations';
 
     /**
      * Known-good request, captured from the native menu on the home page.
@@ -56,10 +56,10 @@
 
     const templateKey = (op, itemType) => `${op}::${itemType || 'UNKNOWN'}`;
 
-    const SKIN_KEY = 'tco-native-button-markup';
+    const SKIN_KEY = 'nie-native-button-markup';
     // Marks our clones so they are never mistaken for Twitch's own button,
     // either by the skip check or by the skin recorder.
-    const CLONE_ATTR = 'data-tco-clone';
+    const CLONE_ATTR = 'data-nie-clone';
 
     /**
      * Fallback skin, captured from a home page shelf card.
@@ -78,8 +78,8 @@
         '7a2 2 0 1 1 4 0 2 2 0 0 1-4 0Zm2 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"></path></svg></div></div></button>' +
         '</div></div></div></div>';
 
-    const MENU_SKIN_KEY = 'tco-native-menu-markup';
-    const MENU_STYLE_KEY = 'tco-native-menu-styles';
+    const MENU_SKIN_KEY = 'nie-native-menu-markup';
+    const MENU_STYLE_KEY = 'nie-native-menu-styles';
     const REPORT_TARGET = '[data-a-target="report-button-report-button"]';
 
     /**
@@ -212,8 +212,8 @@
         }
     }
 
-    const NOTICE_SKIN_KEY = 'tco-native-notice-markup';
-    const NOTICE_STYLE_KEY = 'tco-native-notice-styles';
+    const NOTICE_SKIN_KEY = 'nie-native-notice-markup';
+    const NOTICE_STYLE_KEY = 'nie-native-notice-styles';
     const DEFAULT_NOTICE = "<div data-a-target=\"hidden-content-notice\" class=\"InjectLayout-sc-1i43xsx-0 kuuQvj\"><div class=\"Layout-sc-1xcs6mc-0 gMuNRc\"><div class=\"Layout-sc-1xcs6mc-0 gFsoQ\"><div class=\"Layout-sc-1xcs6mc-0 dCabsg\"><p class=\"CoreText-sc-1txzju1-0 gUQtFU\">Chaîne recommandée supprimée</p></div><div class=\"Layout-sc-1xcs6mc-0 jSseSd\"><button data-a-target=\"hidden-content-notice-undo\" class=\"ScCoreButton-sc-ocjdkq-0 FISKx\"><div class=\"ScCoreButtonLabel-sc-s7h2b7-0 bfhate\"><div data-a-target=\"tw-core-button-label-text\" class=\"Layout-sc-1xcs6mc-0 zdujK\">Annuler</div></div></button><a class=\"ScCoreButton-sc-ocjdkq-0 FISKx\" rel=\"noopener noreferrer\" href=\"/settings/content-preferences\" target=\"_blank\"><div class=\"ScCoreButtonLabel-sc-s7h2b7-0 bfhate\"><div class=\"Layout-sc-1xcs6mc-0 bPLZqY\"><div class=\"ScCoreButtonIcon-sc-ypak37-0 hdLxbr tw-core-button-icon\"><div class=\"ScSvgWrapper-sc-wkgzod-0 cnGLHG tw-svg\" data-a-selector=\"tw-core-button-icon\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill-rule=\"evenodd\" d=\"M6 4h14v14h-2V7.5L5.5 20 4 18.5 16.5 6H6V4Z\" clip-rule=\"evenodd\"></path></svg></div></div></div><div data-a-target=\"tw-core-button-label-text\" class=\"Layout-sc-1xcs6mc-0 zdujK\">Paramètres</div></div></a></div></div><div class=\"Layout-sc-1xcs6mc-0 bENkKx\"><div class=\"ScProgressBarWrapper-sc-1aarjxm-0 kBXuek InjectLayout-sc-1i43xsx-0 kotCZg tw-progress-bar\" role=\"progressbar\" aria-valuenow=\"59\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div data-a-target=\"tw-progress-bar-animation\" class=\"ScProgressBarFill-sc-1aarjxm-1 eOfcxg InjectLayout-sc-1i43xsx-0 cWCFeb\"></div></div></div></div></div>";
 
     function loadNoticeSkin() {
@@ -384,20 +384,20 @@
     const nativeSetHeader = XMLHttpRequest.prototype.setRequestHeader;
 
     XMLHttpRequest.prototype.open = function (method, url) {
-        this._tcoIsGql = String(url).includes('gql.twitch.tv');
-        this._tcoHeaders = {};
+        this._nieIsGql = String(url).includes('gql.twitch.tv');
+        this._nieHeaders = {};
         return nativeOpen.apply(this, arguments);
     };
 
     XMLHttpRequest.prototype.setRequestHeader = function (key, value) {
-        if (this._tcoIsGql) this._tcoHeaders[key] = value;
+        if (this._nieIsGql) this._nieHeaders[key] = value;
         return nativeSetHeader.apply(this, arguments);
     };
 
     XMLHttpRequest.prototype.send = function (body) {
         try {
-            if (this._tcoIsGql) {
-                rememberHeaders(this._tcoHeaders);
+            if (this._nieIsGql) {
+                rememberHeaders(this._nieHeaders);
                 if (typeof body === 'string') inspectGqlBody(body);
             }
         } catch {
@@ -592,23 +592,23 @@
            mounted the component; anywhere else the clone falls back to order 0
            and jumps ahead of siblings that carry a positive order — which is
            how it ended up left of the avatar instead of at the row's end. */
-        .tco-host { position: relative; order: 999; margin-left: auto; }
-        .tco-layer { position: fixed; z-index: 9000; }
+        .nie-host { position: relative; order: 999; margin-left: auto; }
+        .nie-layer { position: fixed; z-index: 9000; }
 
         /* Hover is a pseudo-class, so no computed-style snapshot can carry it. */
-        .tco-layer button:hover {
+        .nie-layer button:hover {
             background-color: var(--color-background-interactable-hover, rgba(255, 255, 255, .12));
         }
 
         /* Used until a native menu has been seen and snapshotted. Twitch's own
            custom properties keep it consistent with the active theme. */
-        .tco-fallback > * {
+        .nie-fallback > * {
             width: 20rem; padding: .5rem 0; border-radius: .6rem;
             background-color: var(--color-background-base, #18181b);
             box-shadow: 0 4px 8px rgba(0, 0, 0, .5);
             color: var(--color-text-base, #efeff1);
         }
-        .tco-fallback button {
+        .nie-fallback button {
             display: block; width: 100%; padding: .5rem 1rem;
             border: none; background: none; color: inherit;
             font: inherit; text-align: left; cursor: pointer;
@@ -616,38 +616,38 @@
         /* The row is the div inside the button, not the button: Twitch puts the
            icon column and the label side by side one level down, so flexing the
            button alone leaves them stacked on two lines. */
-        .tco-fallback button > div {
+        .nie-fallback button > div {
             display: flex; align-items: center; gap: .75rem; width: 100%;
         }
-        .tco-fallback .tw-drop-down-menu-item-figure,
-        .tco-fallback .tw-svg { display: flex; flex: none; }
-        .tco-fallback svg { width: 20px; height: 20px; }
+        .nie-fallback .tw-drop-down-menu-item-figure,
+        .nie-fallback .tw-svg { display: flex; flex: none; }
+        .nie-fallback svg { width: 20px; height: 20px; }
 
-        .tco-notice { position: absolute; inset: 0; z-index: 5; }
-        .tco-fallback-notice > * {
+        .nie-notice { position: absolute; inset: 0; z-index: 5; }
+        .nie-fallback-notice > * {
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             gap: .75rem; width: 100%; height: 100%; padding: 1rem; text-align: center;
             background-color: var(--color-background-base, #18181b);
             color: var(--color-text-base, #efeff1);
         }
-        .tco-fallback-notice button,
-        .tco-fallback-notice a {
+        .nie-fallback-notice button,
+        .nie-fallback-notice a {
             padding: .4rem .8rem; border: none; border-radius: .4rem;
             background-color: var(--color-background-button-secondary-default, rgba(255, 255, 255, .15));
             color: inherit; font: inherit; text-decoration: none; cursor: pointer;
         }
-        .tco-fallback-notice [role="progressbar"] {
+        .nie-fallback-notice [role="progressbar"] {
             width: 80%; height: 4px; border-radius: 2px; overflow: hidden;
             background-color: var(--color-background-button-secondary-default, rgba(255, 255, 255, .15));
         }
-        .tco-fallback-notice [role="progressbar"] > * {
+        .nie-fallback-notice [role="progressbar"] > * {
             height: 100%; background-color: var(--color-fill-brand, #9147ff);
         }
-        .tco-fallback [role="separator"] {
+        .nie-fallback [role="separator"] {
             height: 1px; margin: .5rem 0;
             background-color: var(--color-border-base, rgba(255, 255, 255, .16));
         }
-        .tco-fallback svg { fill: currentColor; flex: none; }
+        .nie-fallback svg { fill: currentColor; flex: none; }
     `;
     (document.head || document.documentElement).appendChild(style);
 
@@ -660,15 +660,15 @@
      * follow what the user does through the events dispatched below.
      *
      * Both scripts declare @grant none, so they run in the page context and
-     * share one window; a companion that loads first waits for 'tco:ready',
-     * one that loads later reads window.tcoMenu directly.
+     * share one window; a companion that loads first waits for 'nie:ready',
+     * one that loads later reads window.nieMenu directly.
      *
      * Nothing here is required: with no companion installed the registry stays
      * empty and the menu is exactly what Twitch ships.
      */
     const extensionItems = [];
 
-    window.tcoMenu = {
+    window.nieMenu = {
         version: 1,
         /**
          * item: { id, label, icon, onSelect } — label and icon may be plain
@@ -687,7 +687,7 @@
         },
     };
 
-    document.dispatchEvent(new CustomEvent('tco:ready', { detail: window.tcoMenu }));
+    document.dispatchEvent(new CustomEvent('nie:ready', { detail: window.nieMenu }));
 
     function announce(name, detail) {
         document.dispatchEvent(new CustomEvent(name, { detail }));
@@ -734,12 +734,12 @@
         hidden.forEach(el => { el.style.visibility = 'hidden'; });
 
         const overlay = document.createElement('div');
-        overlay.className = 'tco-notice';
+        overlay.className = 'nie-notice';
         overlay.setAttribute(CLONE_ATTR, '');
         overlay.innerHTML = loadNoticeSkin();
 
         const panel = overlay.firstElementChild;
-        if (!panel || !applyCapturedStyles(panel, NOTICE_STYLE_KEY)) overlay.classList.add('tco-fallback-notice');
+        if (!panel || !applyCapturedStyles(panel, NOTICE_STYLE_KEY)) overlay.classList.add('nie-fallback-notice');
         overlay.querySelectorAll(`[data-a-target="hidden-content-notice"]`).forEach(el => el.setAttribute(CLONE_ATTR, ''));
 
         let timer = null;
@@ -759,7 +759,7 @@
                 try {
                     await sendUndo(feedbackId);
                     restore();
-                    announce('tco:feedback-undone', Object.assign({ feedbackId }, context));
+                    announce('nie:feedback-undone', Object.assign({ feedbackId }, context));
                 } catch (err) {
                     undo.disabled = false;
                     undo.title = `Undo failed: ${err.message}`;
@@ -868,13 +868,13 @@
         };
 
         const layer = document.createElement('div');
-        layer.className = 'tco-layer';
+        layer.className = 'nie-layer';
         layer.innerHTML = loadMenuSkin();
 
         // Must run while the markup is still intact: the snapshot is indexed
         // positionally, so removing the report item first would shift it.
         const panel = layer.firstElementChild;
-        if (!panel || !applyCapturedStyles(panel)) layer.classList.add('tco-fallback');
+        if (!panel || !applyCapturedStyles(panel)) layer.classList.add('nie-fallback');
 
         const items = [...layer.querySelectorAll('button')];
         const feedbackItem = items.find(i => !i.matches(REPORT_TARGET));
@@ -920,7 +920,7 @@
                 const body = await replay('CHANNEL', channelId);
                 const feedbackId = body?.data?.addRecommendationFeedback?.recommendationFeedback?.id || null;
                 closeMenu();
-                announce('tco:feedback', { login: context.login, channelId, feedbackId, article });
+                announce('nie:feedback', { login: context.login, channelId, feedbackId, article });
                 if (SHOW_REMOVED_NOTICE) {
                     const wrapper = article.closest('[data-target], .shelf-card__impression-wrapper') || article;
                     showNotice(wrapper, feedbackId, context);
@@ -968,7 +968,7 @@
     }
 
     function ourButton(article) {
-        return article.querySelector(`.tco-host[${CLONE_ATTR}]`);
+        return article.querySelector(`.nie-host[${CLONE_ATTR}]`);
     }
 
     /**
@@ -1002,7 +1002,7 @@
         stage.innerHTML = loadSkin();
         const host = stage.firstElementChild;
         if (!host) return;
-        host.classList.add('tco-host');
+        host.classList.add('nie-host');
         host.setAttribute(CLONE_ATTR, '');
         host.querySelectorAll('.feedback-card').forEach(el => el.setAttribute(CLONE_ATTR, ''));
 

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitch — Hidden channels
 // @namespace    https://github.com/neishwang/userscripts
-// @version      1.2.0
-// @description  Blurs and dims the cards of channels you chose to hide. Purely local, no request to Twitch. Adds its item to the menu of "Twitch — Card options button everywhere" when that script is installed, and puts up a button and menu of its own when it is not.
+// @version      1.3.0
+// @description  Blurs and dims the cards of channels you chose to hide. Purely local, no request to Twitch. Adds its item to the menu of "Twitch — Not Interested everywhere" when that script is installed, and a one-click button on the card when it is not.
 // @author       neishwang
 // @match        https://www.twitch.tv/*
 // @run-at       document-start
@@ -106,10 +106,8 @@
      */
     function labels() {
         const lang = (document.documentElement.lang || navigator.language || '').toLowerCase();
-        if (lang.startsWith('fr')) {
-            return { hide: 'Masquer la chaîne', show: 'Ne plus masquer', options: 'Options de masquage' };
-        }
-        return { hide: 'Hide this channel', show: 'Unhide this channel', options: 'Hiding options' };
+        if (lang.startsWith('fr')) return { hide: 'Masquer la chaîne', show: 'Ne plus masquer' };
+        return { hide: 'Hide this channel', show: 'Unhide this channel' };
     }
 
     const itemLabel = login => (isHidden(login) ? labels().show : labels().hide);
@@ -166,10 +164,9 @@
         article.${HIDDEN_CLASS}:hover img { filter: none; }
         ` : ''}
 
-        /* --- Standalone button and menu -----------------------------------
-           Only ever on screen when the companion script is absent, so nothing
-           here has to agree with its markup. Twitch's own custom properties
-           keep it consistent with the active theme. */
+        /* --- Standalone button --------------------------------------------
+           Twitch's own custom properties keep it consistent with the active
+           theme, whichever one the user is on. */
 
         /* Same trick the companion uses: the row is a flex container whose
            children carry an explicit order, so a plain append would land the
@@ -184,25 +181,10 @@
             border: none; border-radius: .4rem; background: none;
             color: var(--color-fill-button-icon, #efeff1); cursor: pointer;
         }
-        .thc-host button:hover,
-        .thc-menu button:hover {
+        .thc-host button:hover {
             background-color: var(--color-background-interactable-hover, rgba(255, 255, 255, .12));
         }
-        .thc-host svg, .thc-menu svg { width: 20px; height: 20px; fill: currentColor; flex: none; }
-
-        .thc-menu {
-            position: fixed; z-index: 9000;
-            width: 16rem; padding: .5rem 0; border-radius: .6rem;
-            background-color: var(--color-background-base, #18181b);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, .5);
-            color: var(--color-text-base, #efeff1);
-        }
-        .thc-menu button {
-            display: flex; align-items: center; gap: .75rem;
-            width: 100%; padding: .5rem 1rem;
-            border: none; background: none; color: inherit;
-            font: inherit; text-align: left; cursor: pointer;
-        }
+        .thc-host svg { width: 20px; height: 20px; fill: currentColor; flex: none; }
     `;
     (document.head || document.documentElement).appendChild(style);
 
@@ -263,88 +245,8 @@
     });
 
     // =========================================================================
-    // Standalone mode: our own button and menu
+    // Standalone mode: our own button on the card
     // =========================================================================
-
-    let openMenu = null;
-
-    function closeMenu() {
-        if (!openMenu) return;
-        openMenu.menu.remove();
-        openMenu.button.setAttribute('aria-expanded', 'false');
-        openMenu = null;
-    }
-
-    document.addEventListener('click', e => {
-        // The menu is mounted on <body>, so a click inside it is not "outside"
-        // even though the button does not contain it.
-        if (!openMenu) return;
-        if (openMenu.button.contains(e.target) || openMenu.menu.contains(e.target)) return;
-        closeMenu();
-    }, true);
-
-    document.addEventListener('keydown', e => {
-        if (e.key === 'Escape') closeMenu();
-    });
-
-    /**
-     * A fixed layer drifts away from its button once the page moves, so it is
-     * moved along rather than dismissed. Closing on scroll was the tempting
-     * shortcut, but focusing a button can scroll its container on its own, and
-     * that would shut the menu the moment it opened.
-     */
-    function trackMenu() {
-        if (!openMenu) return;
-        if (!openMenu.button.isConnected) {
-            closeMenu();
-            return;
-        }
-        positionMenu(openMenu.menu, openMenu.button);
-    }
-
-    addEventListener('scroll', trackMenu, true);
-    addEventListener('resize', trackMenu);
-
-    /** bottom-end against the button, kept inside the viewport. */
-    function positionMenu(menu, button) {
-        const b = button.getBoundingClientRect();
-        const m = menu.getBoundingClientRect();
-
-        let left = Math.max(8, Math.min(b.right - m.width, innerWidth - m.width - 8));
-        let top = b.bottom + 4;
-        if (top + m.height > innerHeight - 8) top = Math.max(8, b.top - m.height - 4);
-
-        menu.style.left = `${Math.round(left)}px`;
-        menu.style.top = `${Math.round(top)}px`;
-    }
-
-    function buildMenu(button, article) {
-        const login = loginOf(article);
-
-        const menu = document.createElement('div');
-        menu.className = 'thc-menu';
-        menu.setAttribute('role', 'menu');
-
-        const item = document.createElement('button');
-        item.type = 'button';
-        item.setAttribute('role', 'menuitem');
-        item.innerHTML = `${svgFor(itemIcon(login))}<span></span>`;
-        // Titles arrive from Twitch, so the label goes in as text, never markup.
-        item.lastElementChild.textContent = itemLabel(login);
-
-        item.addEventListener('click', e => {
-            e.preventDefault();
-            e.stopPropagation();
-            closeMenu();
-            toggle(login);
-        });
-
-        menu.appendChild(item);
-        document.body.appendChild(menu);
-        positionMenu(menu, button);
-        button.setAttribute('aria-expanded', 'true');
-        openMenu = { button, menu };
-    }
 
     /**
      * The row that holds the title block and the avatar — where Twitch puts
@@ -372,7 +274,7 @@
     function shouldInject(article) {
         if (mode === 'standalone') return true;
         if (mode !== 'companion') return false;
-        return BUTTON_ON_NATIVE_CARDS && !article.querySelector('.tco-host');
+        return BUTTON_ON_NATIVE_CARDS && !article.querySelector('.nie-host');
     }
 
     /**
@@ -389,10 +291,7 @@
         const existing = article.querySelector('.thc-host');
 
         if (!shouldInject(article)) {
-            if (existing) {
-                if (openMenu && existing.contains(openMenu.button)) closeMenu();
-                existing.remove();
-            }
+            if (existing) existing.remove();
             return;
         }
 
@@ -412,7 +311,8 @@
                 const button = existing.querySelector('button');
                 if (button) {
                     button.innerHTML = svgFor(itemIcon(login));
-                    button.setAttribute('aria-label', labels().options);
+                    button.setAttribute('aria-label', itemLabel(login));
+                    button.setAttribute('title', itemLabel(login));
                 }
             }
             return;
@@ -425,27 +325,28 @@
         host.className = 'thc-host';
         host.dataset.thcState = state;
 
+        // No menu behind it: the icon and the label already name the single
+        // action, and a one-item dropdown would only put a click in front of
+        // it. In companion mode the same action is an item instead, because
+        // there it joins a menu that already exists.
         const button = document.createElement('button');
         button.type = 'button';
-        button.setAttribute('aria-haspopup', 'menu');
-        button.setAttribute('aria-expanded', 'false');
-        button.setAttribute('aria-label', labels().options);
+        button.setAttribute('aria-label', itemLabel(login));
+        button.setAttribute('title', itemLabel(login));
         button.innerHTML = svgFor(itemIcon(login));
 
-        const open = e => {
+        const act = e => {
             e.preventDefault();
             e.stopPropagation();
-            const wasOpen = openMenu && openMenu.button === button;
-            closeMenu();
-            if (!wasOpen) buildMenu(button, article);
+            toggle(loginOf(article) || login);
         };
 
         // mousedown rather than click, so that a re-render of the card between
         // press and release cannot swallow the interaction. preventDefault
         // keeps the press from focus-scrolling the card into view.
-        button.addEventListener('mousedown', open);
+        button.addEventListener('mousedown', act);
         button.addEventListener('keydown', e => {
-            if (e.key === 'Enter' || e.key === ' ') open(e);
+            if (e.key === 'Enter' || e.key === ' ') act(e);
         });
 
         host.appendChild(button);
@@ -481,8 +382,8 @@
 
     // Load order between two userscripts is not ours to control, so cover both
     // directions: the registry if it is already there, the event if not.
-    if (window.tcoMenu) useCompanion(window.tcoMenu);
-    document.addEventListener('tco:ready', e => useCompanion(e.detail));
+    if (window.nieMenu) useCompanion(window.nieMenu);
+    document.addEventListener('nie:ready', e => useCompanion(e.detail));
 
     setTimeout(() => {
         if (mode !== 'pending') return;
@@ -490,13 +391,13 @@
         apply();
     }, COMPANION_GRACE_MS);
 
-    document.addEventListener('tco:feedback', e => {
+    document.addEventListener('nie:feedback', e => {
         if (!HIDE_ON_NOT_INTERESTED) return;
         hide(e.detail && e.detail.login);
     });
 
     // "Not interested" was taken back, so the hide that came with it goes too.
-    document.addEventListener('tco:feedback-undone', e => {
+    document.addEventListener('nie:feedback-undone', e => {
         if (!HIDE_ON_NOT_INTERESTED) return;
         unhide(e.detail && e.detail.login);
     });
