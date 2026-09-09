@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch — Hidden channels
 // @namespace    https://github.com/neishwang/userscripts
-// @version      1.1.0
+// @version      1.2.0
 // @description  Blurs and dims the cards of channels you chose to hide. Purely local, no request to Twitch. Adds its item to the menu of "Twitch — Card options button everywhere" when that script is installed, and puts up a button and menu of its own when it is not.
 // @author       neishwang
 // @match        https://www.twitch.tv/*
@@ -114,14 +114,30 @@
 
     const itemLabel = login => (isHidden(login) ? labels().show : labels().hide);
 
-    // Crossed-out circle for hiding, plain eye for restoring.
-    const HIDE_ICON = '<path fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20ZM4 12a8 8 0 0 1 ' +
-        '12.9-6.31L5.69 16.9A7.96 7.96 0 0 1 4 12Zm4.1 6.31A8 8 0 0 0 20 12c0-1.8-.59-3.45-1.59-4.79L7.1 ' +
-        '18.31Z" clip-rule="evenodd"></path>';
-    const SHOW_ICON = '<path fill-rule="evenodd" d="M12 5c-4.42 0-8.13 2.94-9.32 6.97a1.5 1.5 0 0 0 0 ' +
-        '.86C3.87 16.06 7.58 19 12 19s8.13-2.94 9.32-6.97a1.5 1.5 0 0 0 0-.86C20.13 7.94 16.42 5 12 5Zm0 ' +
-        '2c3.4 0 6.28 2.2 7.32 5.24l.05.16-.05.16C18.28 14.8 15.4 17 12 17s-6.28-2.2-7.32-5.24l-.05-.16.05-.16C5.72 ' +
-        '9.2 8.6 7 12 7Zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" clip-rule="evenodd"></path>';
+    /**
+     * Twitch's own crossed-out eye, copied from the "not interested" item of
+     * the native card menu. Using Twitch's icon where Twitch has one is what
+     * keeps our entry from standing out as foreign.
+     */
+    const HIDE_ICON = '<path clip-rule="evenodd" fill-rule="evenodd" d="m2.293 3.707 18 18 1.414-1.414-3.683-3.683a7.98 ' +
+        '7.98 0 0 0 .37-.404L22 12l-3.605-4.206A8 8 0 0 0 12.32 5h-.64a8 8 0 0 0-4.122 1.144l-3.85-3.851-1.415 ' +
+        '1.414Zm6.738 3.91 2.45 2.45a2.003 2.003 0 0 1 2.451 2.451l2.678 2.678c.091-.094.18-.191.266-.291L19.366 ' +
+        '12l-2.49-2.905A6 6 0 0 0 12.32 7h-.64a6 6 0 0 0-2.65.616Z"></path>' +
+        '<path d="M12.32 19c.74 0 1.469-.102 2.167-.299l-1.718-1.718a5.967 5.967 0 0 1-.449.017h-.64a6 6 0 0 ' +
+        '1-4.556-2.095L4.634 12l1.455-1.697L4.67 8.885 2 12l3.605 4.206A8 8 0 0 0 11.68 19h.64Z"></path>';
+
+    /**
+     * Lucide's plain eye (MIT), for the unhide direction: Twitch ships the
+     * crossed-out one on this menu but no matching open eye we can lift.
+     *
+     * Lucide draws with strokes where Twitch fills, so the presentation
+     * attributes ride on the group rather than on the <svg>: our item is
+     * rendered inside Twitch's own <svg> element in companion mode, and an
+     * attribute on the group beats the fill inherited from it.
+     */
+    const SHOW_ICON = '<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+        'stroke-linejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 ' +
+        '.696 10.75 10.75 0 0 1-19.876 0"></path><circle cx="12" cy="12" r="3"></circle></g>';
 
     const itemIcon = login => (isHidden(login) ? SHOW_ICON : HIDE_ICON);
 
@@ -215,7 +231,9 @@
         for (const article of document.querySelectorAll('article')) {
             const login = loginOf(article);
             if (!login) continue;
-            article.setAttribute(LOGIN_ATTR, login);
+            // Writing the same value back still counts as a mutation, which would
+            // wake this very observer on every frame for as long as the page is open.
+            if (article.getAttribute(LOGIN_ATTR) !== login) article.setAttribute(LOGIN_ATTR, login);
             article.classList.toggle(HIDDEN_CLASS, hidden.has(login));
             reconcileButton(article);
         }
@@ -269,9 +287,23 @@
         if (e.key === 'Escape') closeMenu();
     });
 
-    // A fixed layer would drift away from its button once the page moves.
-    addEventListener('scroll', () => closeMenu(), true);
-    addEventListener('resize', () => closeMenu());
+    /**
+     * A fixed layer drifts away from its button once the page moves, so it is
+     * moved along rather than dismissed. Closing on scroll was the tempting
+     * shortcut, but focusing a button can scroll its container on its own, and
+     * that would shut the menu the moment it opened.
+     */
+    function trackMenu() {
+        if (!openMenu) return;
+        if (!openMenu.button.isConnected) {
+            closeMenu();
+            return;
+        }
+        positionMenu(openMenu.menu, openMenu.button);
+    }
+
+    addEventListener('scroll', trackMenu, true);
+    addEventListener('resize', trackMenu);
 
     /** bottom-end against the button, kept inside the viewport. */
     function positionMenu(menu, button) {
@@ -367,11 +399,21 @@
         const login = loginOf(article);
         if (!login) return;
 
+        // Repainting the icon on every pass is what a card recycled under a
+        // different channel needs — but only when it actually changed. Writing
+        // the same markup back each frame mutates the DOM, which wakes our own
+        // observer and Twitch's rendering, and the resulting churn tore the
+        // button out from under the pointer: with the element replaced between
+        // mousedown and mouseup, the browser never fired a click at all.
+        const state = `${login}:${isHidden(login) ? 'hidden' : 'shown'}`;
         if (existing) {
-            const button = existing.querySelector('button');
-            if (button) {
-                button.innerHTML = svgFor(itemIcon(login));
-                button.setAttribute('aria-label', labels().options);
+            if (existing.dataset.thcState !== state) {
+                existing.dataset.thcState = state;
+                const button = existing.querySelector('button');
+                if (button) {
+                    button.innerHTML = svgFor(itemIcon(login));
+                    button.setAttribute('aria-label', labels().options);
+                }
             }
             return;
         }
@@ -381,6 +423,7 @@
 
         const host = document.createElement('div');
         host.className = 'thc-host';
+        host.dataset.thcState = state;
 
         const button = document.createElement('button');
         button.type = 'button';
@@ -389,12 +432,20 @@
         button.setAttribute('aria-label', labels().options);
         button.innerHTML = svgFor(itemIcon(login));
 
-        button.addEventListener('click', e => {
+        const open = e => {
             e.preventDefault();
             e.stopPropagation();
             const wasOpen = openMenu && openMenu.button === button;
             closeMenu();
             if (!wasOpen) buildMenu(button, article);
+        };
+
+        // mousedown rather than click, so that a re-render of the card between
+        // press and release cannot swallow the interaction. preventDefault
+        // keeps the press from focus-scrolling the card into view.
+        button.addEventListener('mousedown', open);
+        button.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') open(e);
         });
 
         host.appendChild(button);
