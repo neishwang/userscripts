@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         X (Twitter) — Dim ads to 40% opacity
 // @namespace    https://github.com/neishwang/userscripts
-// @version      1.1.0
+// @version      1.1.1
 // @description  Dims ads in the X/Twitter timeline to 40% opacity (back to 100% on hover).
 // @author       neishwang
+// @icon         https://x.com/favicon.ico
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @run-at       document-start

@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Twitch — Hidden channels
 // @namespace    https://github.com/neishwang/userscripts
-// @version      1.3.0
+// @version      1.3.1
 // @description  Blurs and dims the cards of channels you chose to hide. Purely local, no request to Twitch. Adds its item to the menu of "Twitch — Not Interested everywhere" when that script is installed, and a one-click button on the card when it is not.
 // @author       neishwang
+// @icon         https://www.twitch.tv/favicon.ico
 // @match        https://www.twitch.tv/*
 // @run-at       document-start
 // @grant        none

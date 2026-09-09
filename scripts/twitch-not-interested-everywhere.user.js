@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Twitch — Not Interested everywhere
 // @namespace    https://github.com/neishwang/userscripts
-// @version      4.0.0
+// @version      4.0.1
 // @description  Puts the "not interested" action on every stream card, including the directory pages where Twitch omits the menu entirely. Rebuilds the native menu, sends the real feedback, and shows Twitch's removal notice with a working undo. Companion scripts can add their own items.
 // @author       neishwang
+// @icon         https://www.twitch.tv/favicon.ico
 // @match        https://www.twitch.tv/*
 // @run-at       document-start
 // @grant        none
