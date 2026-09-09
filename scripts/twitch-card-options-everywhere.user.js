@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Twitch — Card options button everywhere
 // @namespace    https://github.com/neishwang/userscripts
-// @version      3.1.0
-// @description  Adds the "more options for this channel" button to every stream card, including directory pages where Twitch omits it.
+// @version      3.2.0
+// @description  Adds the "more options for this channel" button to every stream card, including directory pages where Twitch omits it. Companion scripts can add their own menu items.
 // @author       neishwang
 // @match        https://www.twitch.tv/*
 // @run-at       document-start
@@ -469,14 +469,22 @@
         return null;
     }
 
-    function channelIdFor(article) {
+    /**
+     * The card's channel as { id, login }.
+     *
+     * The login is always readable from the DOM; the numeric id only exists
+     * once findChannel() has matched a fiber, so a card can legitimately come
+     * back with a login and a null id. Callers that need the id check for it.
+     */
+    function cardChannel(article) {
         const link = article.querySelector('a[data-a-target="preview-card-channel-link"]');
         const href = link && link.getAttribute('href');
         // The avatar link can point at /login/videos, so only trust the first segment.
         const login = href ? href.split('/').filter(Boolean)[0] || null : null;
 
         const match = findChannel(article, login);
-        return match ? match.id : null;
+        if (match) return match;
+        return login ? { id: null, login } : null;
     }
 
     // =========================================================================
@@ -643,6 +651,48 @@
     `;
     (document.head || document.documentElement).appendChild(style);
 
+    // =========================================================================
+    // Extension point
+    // =========================================================================
+
+    /**
+     * Companion scripts add their own entries to the rebuilt menu here, and
+     * follow what the user does through the events dispatched below.
+     *
+     * Both scripts declare @grant none, so they run in the page context and
+     * share one window; a companion that loads first waits for 'tco:ready',
+     * one that loads later reads window.tcoMenu directly.
+     *
+     * Nothing here is required: with no companion installed the registry stays
+     * empty and the menu is exactly what Twitch ships.
+     */
+    const extensionItems = [];
+
+    window.tcoMenu = {
+        version: 1,
+        /**
+         * item: { id, label, icon, onSelect } — label and icon may be plain
+         * values or functions of the context, so an item can describe the
+         * state it toggles. Returns a function that unregisters the item.
+         *
+         * context: { article, login, channelId, close }
+         */
+        addItem(item) {
+            if (!item || typeof item.onSelect !== 'function') return () => {};
+            extensionItems.push(item);
+            return () => {
+                const at = extensionItems.indexOf(item);
+                if (at >= 0) extensionItems.splice(at, 1);
+            };
+        },
+    };
+
+    document.dispatchEvent(new CustomEvent('tco:ready', { detail: window.tcoMenu }));
+
+    function announce(name, detail) {
+        document.dispatchEvent(new CustomEvent(name, { detail }));
+    }
+
     let openMenu = null;
 
     function closeMenu() {
@@ -677,7 +727,7 @@
      * undo restores a live card rather than the dead markup an innerHTML swap
      * would leave behind.
      */
-    function showNotice(wrapper, feedbackId) {
+    function showNotice(wrapper, feedbackId, context) {
         if (getComputedStyle(wrapper).position === 'static') wrapper.style.position = 'relative';
 
         const hidden = [...wrapper.children];
@@ -709,6 +759,7 @@
                 try {
                     await sendUndo(feedbackId);
                     restore();
+                    announce('tco:feedback-undone', Object.assign({ feedbackId }, context));
                 } catch (err) {
                     undo.disabled = false;
                     undo.title = `Undo failed: ${err.message}`;
@@ -754,8 +805,67 @@
         layer.style.top = `${Math.round(top)}px`;
     }
 
+    /**
+     * Add the companion entries, each one a clone of Twitch's own row.
+     *
+     * Cloning rather than building from scratch is what keeps these items
+     * looking native: the row already carries the classes and, on pages where
+     * those classes resolve to nothing, the inline styles replayed from the
+     * snapshot. It must therefore run after applyCapturedStyles().
+     */
+    function appendExtensionItems(list, templateRow, separator, context) {
+        for (const item of extensionItems) {
+            const row = templateRow.cloneNode(true);
+            const button = row.querySelector('button');
+            if (!button) continue;
+
+            // Attributes that identify Twitch's own item, not ours.
+            button.removeAttribute('data-a-target');
+            button.removeAttribute('aria-label');
+            button.disabled = false;
+            button.style.opacity = '';
+
+            const resolve = field => {
+                try {
+                    return typeof item[field] === 'function' ? item[field](context) : item[field];
+                } catch {
+                    // A broken companion loses its label or icon, not the menu.
+                    return null;
+                }
+            };
+
+            const labelEl = [...button.querySelectorAll('div')]
+                .find(d => d.children.length === 0 && d.textContent.trim());
+            if (labelEl) labelEl.textContent = resolve('label') || item.id || '';
+
+            const svg = button.querySelector('svg');
+            const icon = resolve('icon');
+            if (svg && icon) svg.innerHTML = icon;
+
+            button.addEventListener('click', e => {
+                e.preventDefault();
+                e.stopPropagation();
+                try {
+                    item.onSelect(context);
+                } catch {
+                    // Same again: a throwing companion must not wedge the menu.
+                }
+            });
+
+            if (separator) list.appendChild(separator.cloneNode(true));
+            list.appendChild(row);
+        }
+    }
+
     function buildMenu(host, button, article) {
-        const channelId = channelIdFor(article);
+        const channel = cardChannel(article);
+        const channelId = channel && channel.id;
+        const context = {
+            article,
+            login: channel ? channel.login : null,
+            channelId,
+            close: closeMenu,
+        };
 
         const layer = document.createElement('div');
         layer.className = 'tco-layer';
@@ -772,10 +882,16 @@
 
         // "Signaler" opens a React modal flow we cannot invoke from outside,
         // so drop it along with the separator rather than showing a dead item.
+        // The separator is copied on the way out: companion items appended
+        // below reuse it rather than inventing one of their own.
+        let separator = null;
         if (reportItem) {
             const row = reportItem.closest('div');
             const sep = row && row.previousElementSibling;
-            if (sep && sep.getAttribute('role') === 'separator') sep.remove();
+            if (sep && sep.getAttribute('role') === 'separator') {
+                separator = sep.cloneNode(true);
+                sep.remove();
+            }
             if (row) row.remove();
         }
 
@@ -804,15 +920,21 @@
                 const body = await replay('CHANNEL', channelId);
                 const feedbackId = body?.data?.addRecommendationFeedback?.recommendationFeedback?.id || null;
                 closeMenu();
+                announce('tco:feedback', { login: context.login, channelId, feedbackId, article });
                 if (SHOW_REMOVED_NOTICE) {
                     const wrapper = article.closest('[data-target], .shelf-card__impression-wrapper') || article;
-                    showNotice(wrapper, feedbackId);
+                    showNotice(wrapper, feedbackId, context);
                 }
             } catch (err) {
                 setLabel(`Failed: ${err.message}`);
                 feedbackItem.disabled = false;
             }
         });
+
+        const feedbackRow = feedbackItem.closest('div');
+        if (feedbackRow && feedbackRow.parentElement) {
+            appendExtensionItems(feedbackRow.parentElement, feedbackRow, separator, context);
+        }
 
         document.body.appendChild(layer);
         positionMenu(layer, button);
